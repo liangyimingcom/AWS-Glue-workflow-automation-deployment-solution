@@ -1,0 +1,239 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS Glue HelloWorld Workflow - 自动生成的CloudFormation模板'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, test, prod]
+    Description: 部署环境
+  
+  ProjectName:
+    Type: String
+    Default: helloworld
+    Description: 项目名称
+  
+  GlueScriptBucketName:
+    Type: String
+    Default: glue-helloworld-scripts-demo
+    Description: 存储Glue脚本的S3存储桶名称
+  
+  GlueServiceRoleName:
+    Type: String
+    Default: AWSGlueServiceRole
+    Description: Glue服务角色名称
+
+Resources:
+  # S3存储桶用于存储Glue脚本
+  GlueScriptBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${GlueScriptBucketName}-${Environment}-${AWS::AccountId}"
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  # IAM角色用于Glue服务
+  GlueServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${GlueServiceRoleName}-${Environment}"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: glue.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
+      Policies:
+        - PolicyName: GlueS3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource: !Sub "${GlueScriptBucket}/*"
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource: !Ref GlueScriptBucket
+
+  # Glue工作流
+  GlueWorkflow:
+    Type: AWS::Glue::Workflow
+    Properties:
+      Name: !Sub "${ProjectName}-${Environment}"
+      Description: !Sub "Simple demo workflow for Glue basic process - ${Environment}"
+
+  # Glue作业
+  GlueJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: !Sub "${ProjectName}-job-${Environment}"
+      Role: !GetAtt GlueServiceRole.Arn
+      Command:
+        Name: glueetl
+        ScriptLocation: !Sub "s3://${GlueScriptBucket}/helloworld_job.py"
+        PythonVersion: "3"
+      DefaultArguments:
+        "--JOB_NAME": !Sub "${ProjectName}-job-${Environment}"
+        "--enable-metrics": ""
+        "--enable-continuous-cloudwatch-log": "true"
+      ExecutionProperty:
+        MaxConcurrentRuns: 1
+      MaxRetries: 0
+      Timeout: 2880
+      GlueVersion: "4.0"
+      WorkerType: G.1X
+      NumberOfWorkers: 10
+      MaxCapacity: 10.0
+
+  # Glue触发器
+  GlueTrigger:
+    Type: AWS::Glue::Trigger
+    Properties:
+      Name: !Sub "${ProjectName}-trigger-${Environment}"
+      Type: ON_DEMAND
+      WorkflowName: !Ref GlueWorkflow
+      Actions:
+        - JobName: !Ref GlueJob
+
+  # Lambda函数用于上传Glue脚本
+  ScriptUploaderFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-script-uploader-${Environment}"
+      Runtime: python3.9
+      Handler: index.handler
+      Role: !GetAtt ScriptUploaderRole.Arn
+      Timeout: 60
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          import base64
+          
+          def handler(event, context):
+              try:
+                  s3 = boto3.client('s3')
+                  
+                  if event['RequestType'] == 'Create' or event['RequestType'] == 'Update':
+                      # Glue脚本内容
+                      script_content = '''import sys
+          from awsglue.transforms import *
+          from awsglue.utils import getResolvedOptions
+          from pyspark.context import SparkContext
+          from awsglue.context import GlueContext
+          from awsglue.job import Job
+          
+          args = getResolvedOptions(sys.argv, ['JOB_NAME'])
+          sc = SparkContext()
+          glueContext = GlueContext(sc)
+          spark = glueContext.spark_session
+          job = Job(glueContext)
+          job.init(args['JOB_NAME'], args)
+          
+          # Simple demo: create a DataFrame and show it
+          data = [("Hello", "World", 1), ("AWS", "Glue", 2), ("Demo", "Job", 3)]
+          columns = ["col1", "col2", "id"]
+          df = spark.createDataFrame(data, columns)
+          
+          print("Hello World from AWS Glue!")
+          df.show()
+          
+          job.commit()'''
+                      
+                      # 上传脚本到S3
+                      bucket_name = event['ResourceProperties']['BucketName']
+                      s3.put_object(
+                          Bucket=bucket_name,
+                          Key='helloworld_job.py',
+                          Body=script_content.encode('utf-8'),
+                          ContentType='text/plain'
+                      )
+                      
+                  elif event['RequestType'] == 'Delete':
+                      # 删除脚本文件
+                      bucket_name = event['ResourceProperties']['BucketName']
+                      try:
+                          s3.delete_object(Bucket=bucket_name, Key='helloworld_job.py')
+                      except:
+                          pass  # 忽略删除错误
+                  
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {})
+
+  # Lambda执行角色
+  ScriptUploaderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource: !Sub "${GlueScriptBucket}/*"
+
+  # 自定义资源用于触发脚本上传
+  ScriptUploader:
+    Type: AWS::CloudFormation::CustomResource
+    Properties:
+      ServiceToken: !GetAtt ScriptUploaderFunction.Arn
+      BucketName: !Ref GlueScriptBucket
+
+Outputs:
+  WorkflowName:
+    Description: Glue工作流名称
+    Value: !Ref GlueWorkflow
+    Export:
+      Name: !Sub "${AWS::StackName}-WorkflowName"
+  
+  JobName:
+    Description: Glue作业名称
+    Value: !Ref GlueJob
+    Export:
+      Name: !Sub "${AWS::StackName}-JobName"
+  
+  TriggerName:
+    Description: Glue触发器名称
+    Value: !Ref GlueTrigger
+    Export:
+      Name: !Sub "${AWS::StackName}-TriggerName"
+  
+  S3BucketName:
+    Description: S3存储桶名称
+    Value: !Ref GlueScriptBucket
+    Export:
+      Name: !Sub "${AWS::StackName}-S3BucketName"
+  
+  StartWorkflowCommand:
+    Description: 启动工作流的AWS CLI命令
+    Value: !Sub "aws glue start-workflow-run --name ${GlueWorkflow} --region ${AWS::Region}"
