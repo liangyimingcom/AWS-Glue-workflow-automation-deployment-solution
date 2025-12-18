@@ -40,7 +40,24 @@ graph LR
 - 具有 Glue 资源访问权限
 - Bash 环境（Linux/macOS/Windows WSL）
 
-### 三步完成部署
+### 🌟 一键自动生成（推荐）
+
+```bash
+# 智能检测项目复杂度，自动选择最佳生成方法
+./scripts/auto-generate-cloudformation.sh <工作流名称> <AWS配置> <区域>
+
+# 部署到目标账号
+aws cloudformation deploy \
+  --template-file cloudformation-export/cloudformation.yaml \
+  --stack-name glue-workflow-stack \
+  --capabilities CAPABILITY_IAM \
+  --parameter-overrides Environment=dev ProjectName=<项目名称>
+
+# 启动工作流
+aws glue start-workflow-run --name <工作流名称>-dev
+```
+
+### 传统方式（三步完成）
 
 ```bash
 # 1️⃣ 导出现有资源并生成CloudFormation模板
@@ -57,6 +74,16 @@ aws glue start-workflow-run --name <工作流名称>-dev
 ```
 
 ## 📖 核心文档
+
+### 🌟 [自动生成方法完整指南](docs/AUTO_GENERATION_METHODS.md) ⭐ NEW
+
+**智能自动生成 CloudFormation 模板**
+
+- 零手写代码，完全自动化
+- 智能复杂度检测（简单/中等/复杂）
+- 支持 5 种 AWS 原生打包方法
+- 详细的 Mermaid 流程图说明
+- 包含最佳实践和常见问题解答
 
 ### 🔑 [Prompt重现指南](docs/PROMPTS.md)
 
@@ -94,23 +121,34 @@ AWS Glue HelloWorld 工作流如何在当前AWS测试环境下，
 
 ```mermaid
 graph TB
-    A[导出脚本] --> B[JSON配置]
-    B --> C[生成脚本]
-    C --> D[CloudFormation模板]
-    D --> E[目标账号部署]
+    A[智能检测脚本] --> B[资源发现]
+    B --> C[复杂度评估]
+    C --> D1[简单模板生成器]
+    C --> D2[中等模板生成器]
+    C --> D3[复杂模板生成器]
+    D1 --> E[CloudFormation模板]
+    D2 --> E
+    D3 --> E
+    E --> F[目标账号部署]
     
-    style D fill:#FFD700
+    style C fill:#87CEEB
+    style E fill:#FFD700
 ```
 
 **关键技术**:
 - **AWS CLI + JMESPath**: 智能资源发现和过滤
 - **Bash自动化**: 端到端流程自动化
 - **CloudFormation IaC**: 参数化基础设施即代码
+- **智能复杂度检测**: 自动选择最佳模板类型
 
 **核心脚本**:
-1. `export-glue-to-cloudformation.sh` - 导出工作流、作业、触发器配置
-2. `generate-cloudformation-from-export.sh` - JSON转CloudFormation YAML
-3. `deploy-glue-stack.sh` - 验证和部署模板
+1. `auto-generate-cloudformation.sh` - 🌟 智能自动生成主工具（NEW）
+2. `generate-simple-cloudformation.sh` - 简单项目模板生成器（NEW）
+3. `generate-medium-cloudformation.sh` - 中等项目模板生成器（NEW）
+4. `generate-complex-cloudformation.sh` - 复杂项目模板生成器（NEW）
+5. `export-glue-to-cloudformation.sh` - 导出工作流、作业、触发器配置
+6. `generate-cloudformation-from-export.sh` - JSON转CloudFormation YAML
+7. `deploy-glue-stack.sh` - 验证和部署模板
 
 ### 📚 [详细使用指南](docs/GUIDE.md)
 
@@ -196,18 +234,26 @@ aws sts get-caller-identity --profile oversea1
 ```
 .
 ├── scripts/                                    # 可执行脚本
+│   ├── auto-generate-cloudformation.sh        # 🌟 智能自动生成主工具 NEW
+│   ├── generate-simple-cloudformation.sh      # 简单项目生成器 NEW
+│   ├── generate-medium-cloudformation.sh      # 中等项目生成器 NEW
+│   ├── generate-complex-cloudformation.sh     # 复杂项目生成器 NEW
 │   ├── export-glue-to-cloudformation.sh       # 资源导出脚本
 │   ├── generate-cloudformation-from-export.sh # 模板生成脚本
 │   ├── deploy-glue-stack.sh                   # 部署脚本
 │   ├── helloworld_job.py                      # 示例Glue脚本
 │   └── glue-helloworld-cloudformation.yaml    # 完整模板示例
 ├── docs/                                       # 文档
+│   ├── AUTO_GENERATION_METHODS.md             # 🌟 自动生成方法指南 NEW
+│   ├── CLOUDFORMATION_PACKAGING_GUIDE.md      # CloudFormation 打包方法
 │   ├── AWS_SETUP.md                           # AWS配置教程
 │   ├── GUIDE.md                               # 详细使用指南
 │   ├── ARCHITECTURE.md                        # 技术架构说明
 │   └── PROMPTS.md                             # Prompt重现指南
 ├── examples/                                   # 示例
 │   └── helloworld/                            # HelloWorld示例
+├── cloudformation-export/                      # 🌟 导出输出目录 NEW
+│   └── README.md                              # 导出目录说明
 └── README.md                                   # 本文件
 ```
 
